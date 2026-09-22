@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.local
+
+#Uploads
+uploads/
+teachingAbilities/
+questionsImage/
+olympiadsImage/
+newsImage/
+
+#Directory structure
+!uploads/.gitkeep
+!teachingAbilities/.gitkeep
+!questionsImage/.gitkeep
+!olympiadsImage/.gitkeep
+!newsImage/.gitkeep
