@@ -1,8 +1,7 @@
 const NewsService = require("../services/newsService");
 const { tryCatch } = require("../utils/tryCatch");
-const multer = require("multer");
+const upload = require("../../middleware/upload");
 const fs = require("fs");
-const path = require("path");
 
 const getNews = tryCatch(async (req, res) => {
     const { id } = req.params;
@@ -42,44 +41,16 @@ const deleteNews = tryCatch(async (req, res) => {
     return res.status(200).json(result);
 });
 
-// Image upload via multer — saves to newsImage/ folder
-const imageStorage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, "newsImage");
-    },
-    filename: function (req, file, cb) {
-        cb(null, file.originalname);
-    },
-});
-
-const upload = multer({ storage: imageStorage });
-
 const uploadNewsImage = tryCatch(async (req, res) => {
-    await new Promise((resolve, reject) => {
-        upload.single("file")(req, res, (err) => {
-            if (err) {
-                console.error("Error uploading file:", err);
-                reject(err);
-                return;
-            }
-            resolve();
-        });
-    });
+    await upload("newsImage")(req, res);
     res.status(200).json({ message: "File uploaded successfully" });
 });
 
 const downloadNewsImage = tryCatch(async (req, res) => {
     const { id, file_ext } = req.body;
-    const filePath = path.join(
-        __dirname,
-        "../../newsImage/" + id + "." + file_ext
-    );
-    if (fs.existsSync(filePath)) {
-        const fileStream = fs.createReadStream(filePath);
-        fileStream.pipe(res);
-    } else {
-        return res.status(404).send("File not found");
-    }
+    const filePath = NewsService.getImagePath(id, file_ext);
+    if (!filePath) return res.status(404).send("File not found");
+    fs.createReadStream(filePath).pipe(res);
 });
 
 module.exports = {

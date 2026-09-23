@@ -1,14 +1,15 @@
 const multer = require("multer");
 const path = require("path");
 
-// The only extensions any upload flow in this app actually needs (materials/teaching-ability PDFs, question images)
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".png", ".jpg", ".jpeg"]);
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 
+const ROOT_DIR = path.join(__dirname, "..");
+
 module.exports = (destination, name) => {
     const storage = multer.diskStorage({
-        destination: (req, file, cb) => cb(null, destination),
+        destination: (req, file, cb) => cb(null, path.join(ROOT_DIR, destination)),
         filename: (req, file, cb) => cb(null, path.basename(name || file.originalname)),
     });
 

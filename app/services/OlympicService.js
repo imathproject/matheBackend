@@ -7,6 +7,10 @@ const OlympicQuestionAssesment = require("../models/olympicQuestionAssessmentMod
 const OlympicAlternatives = require("../models/olympicAlternatives");
 const db = require("../utils/db");
 const Sequelize = require("sequelize");
+const fs = require("fs");
+const path = require("path");
+
+const OLYMPIC_IMAGE_DIR = path.join(__dirname, "../../olympiadsImage");
 
 const deleteQuestionsHelper = async (whereClause, transaction) => {
     const questions = await OlympicQuestion.findAll({ where: whereClause, transaction });
@@ -270,7 +274,17 @@ const deleteOlympicPhase = async (id) => {
     });
 }
 
+const getImagePath = (id, fileExt) => {
+    if (!/^olympic\d+$/.test(String(id)) || !/^[A-Za-z0-9]{1,10}$/.test(String(fileExt))) return null;
+
+    const filePath = path.join(OLYMPIC_IMAGE_DIR, `${id}.${fileExt}`);
+    if (path.dirname(filePath) !== OLYMPIC_IMAGE_DIR) return null;
+
+    return fs.existsSync(filePath) ? filePath : null;
+};
+
 module.exports = {
+    getImagePath,
     getOlympic,
     addNewOlympic,
     getAllOlympics,

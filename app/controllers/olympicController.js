@@ -1,7 +1,6 @@
 const OlympicService = require("../services/OlympicService");
 const { tryCatch } = require("../utils/tryCatch");
-const multer = require("multer");
-const path = require("path");
+const upload = require("../../middleware/upload");
 
 const getOlympic = tryCatch(async (req, res) => {
     const { id } = req.params;
@@ -120,29 +119,8 @@ const deleteOlympicPhase = tryCatch(async (req, res) => {
     return res.status(200).json(result);
 });
 
-// Image upload via multer — saves to olympiadsImage/ folder
-const imageStorage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, "olympiadsImage");
-    },
-    filename: function (req, file, cb) {
-        cb(null, file.originalname);
-    },
-});
-
-const upload = multer({ storage: imageStorage });
-
 const uploadOlympicImage = tryCatch(async (req, res) => {
-    await new Promise((resolve, reject) => {
-        upload.single("file")(req, res, (err) => {
-            if (err) {
-                console.error("Error uploading file:", err);
-                reject(err);
-                return;
-            }
-            resolve();
-        });
-    });
+    await upload("olympiadsImage")(req, res);
     res.status(200).json({ message: "File uploaded successfully" });
 });
 

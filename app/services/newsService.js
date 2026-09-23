@@ -1,4 +1,8 @@
 const News = require("../models/newsModel");
+const fs = require("fs");
+const path = require("path");
+
+const NEWS_IMAGE_DIR = path.join(__dirname, "../../newsImage");
 
 const getNews = async (id) => {
     const news = await News.findOne({ where: { id: id } });
@@ -70,6 +74,15 @@ const deleteNews = async (id) => {
     return { message: "News deleted successfully" };
 };
 
+const getImagePath = (id, fileExt) => {
+    if (!/^news\d+$/.test(String(id)) || !/^[A-Za-z0-9]{1,10}$/.test(String(fileExt))) return null;
+
+    const filePath = path.join(NEWS_IMAGE_DIR, `${id}.${fileExt}`);
+    if (path.dirname(filePath) !== NEWS_IMAGE_DIR) return null;
+
+    return fs.existsSync(filePath) ? filePath : null;
+};
+
 module.exports = {
     getNews,
     getAllNews,
@@ -77,4 +90,5 @@ module.exports = {
     addNewNews,
     updateNews,
     deleteNews,
+    getImagePath,
 };

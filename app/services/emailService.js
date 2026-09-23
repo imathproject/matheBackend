@@ -7,7 +7,7 @@ const templates = {
 
 Welcome to the MathE platform!
 
-You activated the registration process to the MathE platform. Please verify your email address by clicking on the following link: https://mathe.ipb.pt/confirmEmail?checkcode=${newUser.checkcode}
+You activated the registration process to the MathE platform. Please verify your email address by clicking on the following link: ${process.env.FRONTEND_URL}/confirmEmail?checkcode=${newUser.checkcode}
 
 Best regards,
 MathE Platform`,
@@ -18,7 +18,7 @@ MathE Platform`,
     text: `Dear ${email} ,
 
 Recently, there has been a request to change the password for your account.
-If you requested this password change, please click on the following link to reset your password: https://mathe.ipb.pt/newPassword?checkcode=${checkcode}
+If you requested this password change, please click on the following link to reset your password: ${process.env.FRONTEND_URL}/newPassword?checkcode=${checkcode}
 
 If you did not make this request, you can disregard this message and your password will remain the same.
 

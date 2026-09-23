@@ -12,7 +12,7 @@ const axios = require("axios");
 const { calculateChallengeScore, COMPETITION_PENALTY_FACTOR } = require("../utils/challengeScore");
 
 // Python recommendation algorithm server URL
-const PYTHON_ALGORITHM_URL = process.env.ALGORITHM_API_URL;
+const PYTHON_ALGORITHM_URL = process.env.FRONTEND_URL+"/algorithm/api/getQuestionTest";
 
 const getAllCompetitions = async () => {
     const competitions = await Competition.findAll({

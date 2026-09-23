@@ -375,16 +375,9 @@ const getOlympics = tryCatch(async (req, res) => {
 
 const downloadOlympicImage = tryCatch(async (req, res) => {
   const { id, file_ext } = req.body;
-  const filePath = path.join(
-    __dirname,
-    "../../olympiadsImage/" + id + "." + file_ext
-  );
-  if (fs.existsSync(filePath)) {
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-  } else {
-    return res.status(404).send("File not found");
-  }
+  const filePath = OlympicService.getImagePath(id, file_ext);
+  if (!filePath) return res.status(404).send("File not found");
+  fs.createReadStream(filePath).pipe(res);
 });
 module.exports = {
   findOutcomes,
