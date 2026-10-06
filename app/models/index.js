@@ -33,6 +33,9 @@ const OlympicQuestionAssesment = require("./olympicQuestionAssessmentModel");
 const OlympicYear = require("./olympicYearModel");
 const OlympicPhase = require("./olympicPhaseModel");
 const OlympicAlternatives = require("./olympicAlternatives");
+const OlympicKeyword = require("./olympicKeywordModel");
+const OlympicKeywordTranslation = require("./olympicKeywordTranslationModel");
+const OlympicQuestionKeyword = require("./olympicQuestionKeywordModel");
 const RevisorOlympics = require("./revisorOlympicsModel");
 const News = require("./newsModel");
 const Competition = require("./competitionModel");
@@ -220,8 +223,8 @@ OlympicQuestionAssesment.belongsTo(User, { foreignKey: "student_id" });
 OlympicQuestion.hasMany(OlympicQuestionAssesment, { foreignKey: "id_olympic_question", as: "student_answers" });
 OlympicQuestionAssesment.belongsTo(OlympicQuestion, { foreignKey: "id_olympic_question", as: "question_details" });
 
-User.hasMany(OlympicQuestion, { foreignKey: "validate_by" });
-OlympicQuestion.belongsTo(User, { foreignKey: "validate_by" });
+User.hasMany(OlympicQuestion, { as: "OlympicValidator", foreignKey: "validate_by" });
+OlympicQuestion.belongsTo(User, { as: "Validator", foreignKey: "validate_by" });
 
 User.hasMany(OlympicQuestion, { as: "OlympicLecturer", foreignKey: "id_lect" });
 OlympicQuestion.belongsTo(User, { as: "Lecturer", foreignKey: "id_lect" });
@@ -231,12 +234,14 @@ OlympicAlternatives.belongsTo(OlympicQuestion, { foreignKey: "id_olympic_questio
 
 OlympicQuestion.belongsTo(OlympicAlternatives, { foreignKey: "correctAnswerId", as: "correct_alternative" });
 
+OlympicQuestion.belongsToMany(OlympicKeyword, { through: OlympicQuestionKeyword, as: "keywords", foreignKey: "id_olympic_question", otherKey: "id_olympic_keyword" });
+OlympicKeyword.belongsToMany(OlympicQuestion, { through: OlympicQuestionKeyword, foreignKey: "id_olympic_keyword", otherKey: "id_olympic_question" });
+
+OlympicKeyword.hasMany(OlympicKeywordTranslation, { foreignKey: "id_olympic_keyword", as: "translations" });
+OlympicKeywordTranslation.belongsTo(OlympicKeyword, { foreignKey: "id_olympic_keyword" });
+
 User.belongsToMany(Olympic, { through: RevisorOlympics, foreignKey: "userFinalId", otherKey: "id_olympic" });
 Olympic.belongsToMany(User, { through: RevisorOlympics, foreignKey: "id_olympic", otherKey: "userFinalId" });
-
-//Olympic Assessment
-User.hasMany(OlympicQuestionAssesment, { foreignKey: "id_stud" });
-OlympicQuestionAssesment.belongsTo(User, { foreignKey: "id_stud" });
 
 
 //Many-to-many

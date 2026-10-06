@@ -32,6 +32,11 @@ const OlympicQuestion = db.define("olympic_questions", {
     type: Sequelize.TEXT,
     allowNull: true,
   },
+  difficulty: {
+    type: Sequelize.INTEGER,
+    allowNull: true,
+    validate: { min: 1, max: 5 },
+  },
   correctAnswerId: {
     type: Sequelize.INTEGER,
     allowNull: true,
