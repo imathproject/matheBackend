@@ -5,7 +5,11 @@ const OlympicLevel = require("../models/olympicLevelModel");
 const OlympicPhase = require("../models/olympicPhaseModel");
 const OlympicYear = require("../models/olympicYearModel");
 const User = require("../models/userModel");
+const OlympicKeyword = require("../models/olympicKeywordModel");
+const OlympicQuestionAssesment = require("../models/olympicQuestionAssessmentModel");
+const olympicKeywordService = require("./olympicKeywordService");
 const getDate = require("../utils/date");
+const db = require("../utils/db");
 const Sequelize = require("sequelize");
 const fs = require("fs");
 const path = require("path");
@@ -37,11 +41,39 @@ const getOlympicImagePath = async (id) => {
     return fs.existsSync(filePath) ? filePath : null;
 };
 
-const mapAlternatives = (questions) => {
+const MAX_ALTERNATIVES = 7;
+
+// Accepts a plain string or { id, text }. Returns { id, text }, or null when
+// the text is blank or not a string.
+const normalizeAlternative = (item) => {
+    const isObject = item !== null && typeof item === 'object';
+    const text = isObject ? item.text : item;
+    if (typeof text !== 'string' || text.trim() === '') return null;
+
+    const id = isObject && item.id !== null && item.id !== undefined && item.id !== ''
+        ? Number(item.id)
+        : null;
+    return { id: Number.isInteger(id) && id > 0 ? id : null, text };
+};
+
+// correctFirst: edit listings only. The forms treat index 0 as the correct
+// alternative, so it goes first and the rest follow by id.
+const mapAlternatives = (questions, correctFirst = false) => {
     return questions.map(q => {
         const plainQ = q.toJSON ? q.toJSON() : q;
         if (plainQ.alternatives) {
+            if (correctFirst && Array.isArray(plainQ.alternatives)) {
+                const correctId = plainQ.correctAnswerId;
+                plainQ.alternatives = [...plainQ.alternatives].sort((a, b) => {
+                    if (a.id === correctId) return -1;
+                    if (b.id === correctId) return 1;
+                    return a.id - b.id;
+                });
+            }
             delete plainQ.correctAnswerId;
+        }
+        if (Array.isArray(plainQ.keywords)) {
+            plainQ.keywords = plainQ.keywords.map((k) => k.id);
         }
         return plainQ;
     });
@@ -57,6 +89,7 @@ const addNewOlympicQuestion = async (data) => {
             id_olympic_year: data.id_olympic_year,
             id_olympic_phase: data.id_olympic_phase,
             question: data.question,
+            difficulty: data.difficulty ?? null,
             file_name: null,
             file_ext: data.file_ext || null,
             date: date,
@@ -68,9 +101,10 @@ const addNewOlympicQuestion = async (data) => {
         let correctAltId = null;
         if (data.alternatives && data.alternatives.length > 0 && data.alternatives.length < 8) {
             for (let i = 0; i < data.alternatives.length; i++) {
-                const altText = data.alternatives[i];
-                if (!altText || altText.trim() === '') continue;
-                const alt = await OlympicAlternatives.create({ id_olympic_question: newQuestion.id, text: altText });
+                // Strings or { id, text }; any id is ignored on create.
+                const normalized = normalizeAlternative(data.alternatives[i]);
+                if (!normalized) continue;
+                const alt = await OlympicAlternatives.create({ id_olympic_question: newQuestion.id, text: normalized.text });
                 if (i === 0) {
                     correctAltId = alt.id;
                 }
@@ -83,6 +117,8 @@ const addNewOlympicQuestion = async (data) => {
         if (Object.keys(postCreate).length > 0) {
             await OlympicQuestion.update(postCreate, { where: { id: newQuestion.id } });
         }
+
+        await olympicKeywordService.replaceForQuestion(newQuestion.id, data.keywords);
 
         return newQuestion.id;
     } catch (error) {
@@ -137,7 +173,8 @@ const enrichedIncludes = () => ([
     { model: OlympicPhase, attributes: ['id', 'phase'] },
     { model: OlympicYear, attributes: ['id', 'year'] },
     { model: OlympicAlternatives, as: 'alternatives', separate: true, order: [['id', 'ASC']] },
-    { model: User, as: 'Lecturer', attributes: ['id', 'name', 'surname'] }
+    { model: User, as: 'Lecturer', attributes: ['id', 'name', 'surname'] },
+    { model: OlympicKeyword, as: "keywords", attributes: ["id"], through: { attributes: [] } }
 ]);
 
 const getEnrichedOlympicQuestions = async (filters) => {
@@ -146,10 +183,10 @@ const getEnrichedOlympicQuestions = async (filters) => {
         order: [['id', 'ASC']],
         include: enrichedIncludes(),
     });
-    return mapAlternatives(questions);
+    return mapAlternatives(questions, true);
 }
 
-const getOwnOlympicQuestions = async (filters, id_lect) => {
+const getUserOlympicQuestions = async (filters, id_lect) => {
     const whereClause = buildOlympicQuestionWhere(filters);
     whereClause.id_lect = id_lect;
 
@@ -158,7 +195,7 @@ const getOwnOlympicQuestions = async (filters, id_lect) => {
         order: [['id', 'ASC']],
         include: enrichedIncludes(),
     });
-    return mapAlternatives(questions);
+    return mapAlternatives(questions, true);
 }
 
 const getOlympicQuestionOwner = async (id) => {
@@ -187,7 +224,7 @@ const getOlympicQuestionsForValidation = async (filters, id_lect, isAdmin, allow
         order: [['id', 'ASC']],
         include: enrichedIncludes(),
     });
-    return mapAlternatives(questions);
+    return mapAlternatives(questions, true);
 }
 
 const getAllOlympicQuestions = async (id_olympic, id_olympic_phase, id_olympic_level, id_olympic_year, validate, active) => {
@@ -208,6 +245,8 @@ const getAllOlympicQuestions = async (id_olympic, id_olympic_phase, id_olympic_l
 };
 
 const deleteOlympicQuestion = async (id, fileExt) => {
+    await olympicKeywordService.deleteForQuestions([id]);
+
     const deletedRows = await OlympicQuestion.destroy({ where: { id: id } });
     if (deletedRows === 0) {
         throw new Error("QUESTION_NOT_FOUND");
@@ -240,41 +279,92 @@ const updateOlympicQuestion = async (data, id, actingUserId, previousValidate) =
         updatePayload.file_name = olympicFileName(id, data.file_ext);
     }
 
+    if (data.difficulty !== undefined) {
+        updatePayload.difficulty = data.difficulty;
+    }
+
     const verdict = Number(updatePayload.validate);
     if ([1, 2].includes(verdict) && verdict !== Number(previousValidate)) {
         updatePayload.validate_by = actingUserId;
         updatePayload.validate_date = date;
     }
 
-    const [updatedRows] = await OlympicQuestion.update(updatePayload, {
-        where: { id: id }
+    await db.transaction(async (transaction) => {
+        const [updatedRows] = await OlympicQuestion.update(updatePayload, {
+            where: { id: id },
+            transaction
+        });
+
+        if (updatedRows === 0) {
+            throw new Error("QUESTION_NOT_FOUND");
+        }
+
+        await syncAlternatives(id, data.alternatives, transaction);
     });
 
-    if (updatedRows === 0) {
-        throw new Error("QUESTION_NOT_FOUND");
+    // replaceForQuestion opens its own transaction.
+    if (Array.isArray(data.keywords)) {
+        await olympicKeywordService.replaceForQuestion(id, data.keywords);
     }
-
-    await recreateAlternatives(id, data.alternatives);
 
     return { message: "Question updated successfully" };
 }
 
-const recreateAlternatives = async (id, alternatives) => {
-    await OlympicAlternatives.destroy({ where: { id_olympic_question: id } });
-    let correctAltId = null;
-    if (alternatives && alternatives.length > 0) {
-        for (let i = 0; i < alternatives.length; i++) {
-            const altText = alternatives[i];
-            if (!altText || altText.trim() === '') continue;
-            const alt = await OlympicAlternatives.create({ id_olympic_question: id, text: altText });
-            if (i === 0) {
-                correctAltId = alt.id;
+// Diffs the alternatives of a question against the payload, keeping the id of
+// every alternative that still exists. Items are strings or { id, text }; the
+// item at index 0 is the correct answer. A non-array payload changes nothing.
+const syncAlternatives = async (id, alternatives, transaction) => {
+    if (!Array.isArray(alternatives)) return;
+    // Same limit as addNewOlympicQuestion, which also ignores the list silently.
+    if (alternatives.length > MAX_ALTERNATIVES) return;
+
+    const incoming = [];
+    let correctIndex = -1;
+    alternatives.forEach((item, index) => {
+        const normalized = normalizeAlternative(item);
+        if (!normalized) return;
+        if (index === 0) correctIndex = incoming.length;
+        incoming.push(normalized);
+    });
+
+    const existing = await OlympicAlternatives.findAll({
+        where: { id_olympic_question: id },
+        transaction
+    });
+    const existingById = new Map(existing.map((alt) => [alt.id, alt]));
+
+    const keptIds = new Set();
+    const resultIds = [];
+    for (const item of incoming) {
+        // Only ids of this question, used once per payload, keep their row.
+        const current = item.id !== null && !keptIds.has(item.id) ? existingById.get(item.id) : null;
+        if (current) {
+            if (current.text !== item.text) {
+                await current.update({ text: item.text }, { transaction });
             }
+            keptIds.add(current.id);
+            resultIds.push(current.id);
+        } else {
+            const created = await OlympicAlternatives.create(
+                { id_olympic_question: id, text: item.text },
+                { transaction }
+            );
+            resultIds.push(created.id);
         }
     }
 
-    if (correctAltId) {
-        await OlympicQuestion.update({ correctAnswerId: correctAltId }, { where: { id: id } });
+    // Before the destroy: correctAnswerId may point to a row about to go.
+    await OlympicQuestion.update(
+        { correctAnswerId: correctIndex >= 0 ? resultIds[correctIndex] : null },
+        { where: { id: id }, transaction }
+    );
+
+    const removedIds = existing.filter((alt) => !keptIds.has(alt.id)).map((alt) => alt.id);
+    if (removedIds.length > 0) {
+        await OlympicAlternatives.destroy({
+            where: { id: removedIds, id_olympic_question: id },
+            transaction
+        });
     }
 };
 
@@ -297,15 +387,27 @@ const validateOlympicQuestion = async (data, id, validatorId) => {
         validate_date: date
     };
 
-    const [updatedRows] = await OlympicQuestion.update(updatePayload, {
-        where: { id: id }
-    });
-
-    if (updatedRows === 0) {
-        throw new Error("QUESTION_NOT_FOUND");
+    if (data.difficulty !== undefined) {
+        updatePayload.difficulty = data.difficulty;
     }
 
-    await recreateAlternatives(id, data.alternatives);
+    await db.transaction(async (transaction) => {
+        const [updatedRows] = await OlympicQuestion.update(updatePayload, {
+            where: { id: id },
+            transaction
+        });
+
+        if (updatedRows === 0) {
+            throw new Error("QUESTION_NOT_FOUND");
+        }
+
+        await syncAlternatives(id, data.alternatives, transaction);
+    });
+
+    // replaceForQuestion opens its own transaction.
+    if (Array.isArray(data.keywords)) {
+        await olympicKeywordService.replaceForQuestion(id, data.keywords);
+    }
 
     return { message: "Question validated successfully" };
 }
@@ -324,6 +426,7 @@ const getOlympicTest = async (id_olympic, id_olympic_phase, id_olympic_level, id
     }
     const questions = await OlympicQuestion.findAll({
         where: whereClause,
+        attributes: { exclude: ['difficulty'] },
         order: Sequelize.literal('RAND()'),
         limit: total,
         include: [
@@ -352,11 +455,121 @@ const getOlympicTestOptions = async (id_olympic) => {
     });
 }
 
+// Project Information reports: body filters ({ olympic, level, phase, year })
+// to the names buildOlympicQuestionWhere expects.
+const informationWhere = ({ olympic, level, phase, year } = {}) => buildOlympicQuestionWhere({
+    id_olympic: olympic,
+    id_olympic_level: level,
+    id_olympic_phase: phase,
+    id_olympic_year: year
+});
+
+// enrichedIncludes() without the alternatives (never exported, D6) and with
+// the validator and the keyword names.
+const informationIncludes = (withKeywords) => {
+    const includes = enrichedIncludes()
+        .filter((include) => !["alternatives", "keywords"].includes(include.as));
+
+    includes.push({ model: User, as: 'Validator', attributes: ['id', 'name', 'surname'] });
+    if (withKeywords) {
+        includes.push({ model: OlympicKeyword, as: "keywords", attributes: ["id", "name"], through: { attributes: [] } });
+    }
+    return includes;
+};
+
+const fullName = (user) =>
+    user ? [user.name, user.surname].filter(Boolean).join(" ") : null;
+
+// { [id_olympic_question]: rows } for a model that points to the question.
+const countByQuestion = async (model, questionIds) => {
+    const rows = await model.findAll({
+        attributes: ['id_olympic_question', [Sequelize.fn('COUNT', Sequelize.col('id')), 'total']],
+        where: { id_olympic_question: questionIds },
+        group: ['id_olympic_question'],
+        raw: true,
+    });
+
+    return rows.reduce((counts, row) => {
+        counts[row.id_olympic_question] = Number(row.total);
+        return counts;
+    }, {});
+};
+
+const getAllOlympicQuestionsInfo = async (filters) => {
+    const questions = await OlympicQuestion.findAll({
+        where: informationWhere(filters),
+        attributes: ['id', 'question', 'difficulty', 'validate', 'active', 'date'],
+        order: [['id', 'ASC']],
+        include: informationIncludes(true),
+    });
+
+    if (!questions || questions.length === 0) return [];
+
+    const ids = questions.map((question) => question.id);
+    const [alternatives, answers] = await Promise.all([
+        countByQuestion(OlympicAlternatives, ids),
+        countByQuestion(OlympicQuestionAssesment, ids),
+    ]);
+
+    return questions.map((question) => {
+        const data = question.get({ plain: true });
+
+        return {
+            id: data.id,
+            question: data.question,
+            Olympiad: data.olympic ? data.olympic.name : null,
+            Level: data.olympic_level ? data.olympic_level.level : null,
+            Phase: data.olympic_phase ? data.olympic_phase.phase : null,
+            Year: data.olympic_year ? data.olympic_year.year : null,
+            Difficulty: data.difficulty,
+            validate: data.validate,
+            active: data.active,
+            date: data.date,
+            Author: fullName(data.Lecturer),
+            Validator: fullName(data.Validator),
+            Keywords: (data.keywords || []).map((keyword) => keyword.name).join(", "),
+            countAlternatives: alternatives[data.id] || 0,
+            countAnswers: answers[data.id] || 0,
+        };
+    });
+};
+
+const getOlympicValidationInfo = async (filters) => {
+    const questions = await OlympicQuestion.findAll({
+        where: informationWhere(filters),
+        attributes: ['id', 'question', 'validate', 'validate_date'],
+        order: [['id', 'ASC']],
+        include: informationIncludes(false),
+    });
+
+    if (!questions || questions.length === 0) return [];
+
+    return questions.map((question) => {
+        const data = question.get({ plain: true });
+
+        return {
+            id: data.id,
+            Olympiad: data.olympic ? data.olympic.name : null,
+            Level: data.olympic_level ? data.olympic_level.level : null,
+            Phase: data.olympic_phase ? data.olympic_phase.phase : null,
+            Year: data.olympic_year ? data.olympic_year.year : null,
+            Author: fullName(data.Lecturer),
+            Validator: fullName(data.Validator),
+            validate: data.validate,
+            validate_date: data.validate_date,
+            question: data.question,
+        };
+    });
+};
+
 module.exports = {
+    informationWhere,
+    getAllOlympicQuestionsInfo,
+    getOlympicValidationInfo,
     addNewOlympicQuestion,
     getAllOlympicQuestions,
     getEnrichedOlympicQuestions,
-    getOwnOlympicQuestions,
+    getUserOlympicQuestions,
     getOlympicQuestionOwner,
     getOlympicQuestionsForValidation,
     deleteOlympicQuestion,

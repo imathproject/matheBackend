@@ -16,6 +16,11 @@ const StudentWork = require("../models/studentWorkModel");
 const TeachingTopics = require("../models/teachingTopicsModel");
 const Topic = require("../models/topicModel");
 const AssessmentQuestions = require("../models/QuestionAssessmentModel");
+const OlympicQuestion = require("../models/olympicQuestionsModel");
+const OlympicQuestionAssessment = require("../models/olympicQuestionAssessmentModel");
+const OlympiadsChallenge = require("../models/olympiadsChallengeModel");
+const OlympiadsChallengeQuestion = require("../models/olympiadsChallengeQuestionModel");
+const RevisorOlympics = require("../models/revisorOlympicsModel");
 const topicService = require("./topicService");
 const teachingTopicsService = require("./teachingTopicService");
 const revisorTopicsService = require("./revisorTopicsService");
@@ -147,6 +152,102 @@ const getUsersInfo = async (roles) => {
     delete userData.platform__degree;
     delete userData.platform__percentage_degree;
     delete userData.platform__university;
+    return userData;
+  });
+};
+
+// Rows per user in an Olympic table: Map(userId -> count)
+const countByUser = async (model, column, where = {}) => {
+  const rows = await model.findAll({
+    attributes: [column, [sequelize.fn("COUNT", sequelize.col("id")), "total"]],
+    where: { ...where, [column]: { [Op.ne]: null } },
+    group: [column],
+    raw: true,
+  });
+  return new Map(rows.map((row) => [row[column], Number(row.total)]));
+};
+
+// Same report as getUsersInfo, restricted to users with activity in MathE Olympic
+const getOlympicUsersInfo = async (roles = []) => {
+  const valueMap = {
+    1: process.env.Student,
+    2: process.env.Lecture,
+    3: process.env.Lecture_Reviewer,
+    4: process.env.Admin,
+  };
+
+  const [assessmentAnswers, challengeRecords, challengeAnswers, created, validated, challenges, reviewers] =
+    await Promise.all([
+      countByUser(OlympicQuestionAssessment, "student_id"),
+      countByUser(OlympiadsChallengeQuestion, "user_id"),
+      // option_selected = -1 is the placeholder created when the challenge starts
+      countByUser(OlympiadsChallengeQuestion, "user_id", { option_selected: { [Op.ne]: -1 } }),
+      countByUser(OlympicQuestion, "id_lect"),
+      countByUser(OlympicQuestion, "validate_by"),
+      countByUser(OlympiadsChallenge, "user_id"),
+      countByUser(RevisorOlympics, "userFinalId"),
+    ]);
+
+  const ids = [
+    ...new Set(
+      [assessmentAnswers, challengeRecords, created, validated, challenges, reviewers].flatMap((map) => [
+        ...map.keys(),
+      ])
+    ),
+  ];
+  if (ids.length === 0) return [];
+
+  const conditions = { id: { [Op.in]: ids } };
+  // No role selected lists nobody, as in getUsersInfo
+  const finalRoles = roles.map((num) => valueMap[num]).filter(Boolean);
+  if (finalRoles.length === 0) return [];
+  conditions.typology = finalRoles;
+
+  const users = await UserModel.findAll({
+    where: conditions,
+    attributes: ["id", "name", "surname", "email"],
+    include: [
+      { model: RoleModel, attributes: ["id", "description"] },
+      { model: Course, attributes: ["label"] },
+      { model: Experience, attributes: ["label"] },
+      { model: Degree, attributes: ["label"] },
+      { model: DegreePercentage, attributes: ["label"] },
+      { model: Gender, attributes: ["label"] },
+      { model: Country, attributes: ["name"] },
+      { model: University, attributes: ["name"] },
+      { model: Hobbies, attributes: ["label"] },
+      { model: Learning, attributes: ["label"] },
+      { model: Teaching, attributes: ["label"] },
+      { model: Work, attributes: ["label"] },
+      { model: StudentWork, attributes: ["label"] },
+      { model: Position, attributes: ["label"] },
+    ],
+  });
+
+  return users.map((user) => {
+    const userData = { ...user.dataValues };
+    userData.country = userData.country ? userData.country.name : null;
+    userData.hobby = userData.hobby ? userData.hobby.label : null;
+    userData.learning_style = userData.learning_style ? userData.learning_style.label : null;
+    userData.course = userData.platform__course ? userData.platform__course.label : null;
+    userData.degree = userData.platform__degree ? userData.platform__degree.label : null;
+    userData.percentage_degree = userData.platform__percentage_degree ? userData.platform__percentage_degree.label : null;
+    userData.university = userData.platform__university ? userData.platform__university.name : null;
+    userData.user_gender = userData.user_gender ? userData.user_gender.label : null;
+    userData.teacher_experience = userData.teacher_experience ? userData.teacher_experience.label : null;
+    userData.teaching_style = userData.teaching_style ? userData.teaching_style.label : null;
+    userData.work_preference = userData.work_preference ? userData.work_preference.label : null;
+    userData.studentwork_preference = userData.studentwork_preference ? userData.studentwork_preference.label : null;
+    userData.teacher_position = userData.teacher_position ? userData.teacher_position.label : null;
+    userData.role = userData.role ? userData.role.description : null;
+    delete userData.platform__course;
+    delete userData.platform__degree;
+    delete userData.platform__percentage_degree;
+    delete userData.platform__university;
+    userData.countAnswers = (assessmentAnswers.get(user.id) || 0) + (challengeAnswers.get(user.id) || 0);
+    userData.countQuestionsCreated = created.get(user.id) || 0;
+    userData.countQuestionsValidated = validated.get(user.id) || 0;
+    userData.countChallengesCreated = challenges.get(user.id) || 0;
     return userData;
   });
 };
@@ -523,6 +624,7 @@ module.exports = {
   findAll,
   getUser,
   getUsersInfo,
+  getOlympicUsersInfo,
   updateUser,
   updateTeacher,
   updateStatus,

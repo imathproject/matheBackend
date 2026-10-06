@@ -5,6 +5,8 @@ const Olympic = require("../models/olympicModel");
 const OlympicQuestion = require("../models/olympicQuestionsModel");
 const OlympicQuestionAssesment = require("../models/olympicQuestionAssessmentModel");
 const OlympicAlternatives = require("../models/olympicAlternatives");
+const RevisorOlympics = require("../models/revisorOlympicsModel");
+const olympicKeywordService = require("./olympicKeywordService");
 const db = require("../utils/db");
 const Sequelize = require("sequelize");
 const fs = require("fs");
@@ -22,6 +24,8 @@ const deleteQuestionsHelper = async (whereClause, transaction) => {
         await OlympicQuestionAssesment.destroy({ where: { id_olympic_question: questionIds }, transaction });
         // Delete alternatives
         await OlympicAlternatives.destroy({ where: { id_olympic_question: questionIds }, transaction });
+        // Delete keyword links
+        await olympicKeywordService.deleteForQuestions(questionIds, transaction);
         // Delete the questions
         await OlympicQuestion.destroy({ where: whereClause, transaction });
     }
@@ -80,16 +84,34 @@ const deleteOlympic = async (id) => {
     });
 }
 
+// An olympiad is created together with its levels, years and phases, so it
+// never exists without at least one of each.
 const addNewOlympic = async (data) => {
-    const newOlympic = await Olympic.create({
-        name: data.name,
-        active: data.active,
-        language: data.language,
-        link: data.link,
-        imageUrl: data.imageUrl
+    return await db.transaction(async (t) => {
+        const newOlympic = await Olympic.create({
+            name: data.name,
+            active: data.active,
+            language: data.language,
+            link: data.link,
+            imageUrl: data.imageUrl
+        }, { transaction: t });
+
+        const id_olympic = newOlympic.id;
+        await OlympicLevel.bulkCreate(data.levels.map((level) => ({ id_olympic, level })), { transaction: t });
+        await OlympicYear.bulkCreate(data.years.map((year) => ({ id_olympic, year })), { transaction: t });
+        await OlympicPhase.bulkCreate(data.phases.map((phase) => ({ id_olympic, phase })), { transaction: t });
+
+        return newOlympic;
     });
-    return newOlympic;
 }
+
+// Refuses to remove the only level / year / phase an olympiad has left.
+const assertNotLast = async (model, row, name, transaction) => {
+    const total = await model.count({ where: { id_olympic: row.id_olympic }, transaction });
+    if (total <= 1) {
+        throw { kind: "invalid_input", detail: `An olympiad must keep at least one ${name}.` };
+    }
+};
 
 const updateOlympic = async (data) => {
     const olympic = await Olympic.findByPk(data.id);
@@ -151,6 +173,11 @@ const updateOlympicLevel = async (data) => {
 
 const deleteOlympicLevel = async (id) => {
     return await db.transaction(async (t) => {
+        const level = await OlympicLevel.findByPk(id, { transaction: t });
+        if (!level) {
+            throw new Error("OLYMPIC_LEVEL_NOT_FOUND");
+        }
+        await assertNotLast(OlympicLevel, level, "level", t);
         await deleteQuestionsHelper({ id_olympic_level: id }, t);
         const deletedRows = await OlympicLevel.destroy({
             where: { id: id },
@@ -207,6 +234,11 @@ const updateOlympicYear = async (data) => {
 
 const deleteOlympicYear = async (id) => {
     return await db.transaction(async (t) => {
+        const year = await OlympicYear.findByPk(id, { transaction: t });
+        if (!year) {
+            throw new Error("OLYMPIC_YEAR_NOT_FOUND");
+        }
+        await assertNotLast(OlympicYear, year, "year", t);
         await deleteQuestionsHelper({ id_olympic_year: id }, t);
         const deletedRows = await OlympicYear.destroy({
             where: { id: id },
@@ -262,6 +294,11 @@ const updateOlympicPhase = async (data) => {
 
 const deleteOlympicPhase = async (id) => {
     return await db.transaction(async (t) => {
+        const phase = await OlympicPhase.findByPk(id, { transaction: t });
+        if (!phase) {
+            throw new Error("OLYMPIC_PHASE_NOT_FOUND");
+        }
+        await assertNotLast(OlympicPhase, phase, "phase", t);
         await deleteQuestionsHelper({ id_olympic_phase: id }, t);
         const deletedRows = await OlympicPhase.destroy({
             where: { id: id },
@@ -273,6 +310,50 @@ const deleteOlympicPhase = async (id) => {
         return { message: "Olympic Phase deleted successfully" };
     });
 }
+
+//Project Information
+// One grouped COUNT per table, so no join multiplies the rows
+const countByOlympic = async (model, where = {}, column = "id") => {
+    const rows = await model.findAll({
+        attributes: [
+            "id_olympic",
+            [Sequelize.fn("COUNT", Sequelize.fn("DISTINCT", Sequelize.col(column))), "total"],
+        ],
+        where,
+        group: ["id_olympic"],
+        raw: true,
+    });
+    return new Map(rows.map((row) => [row.id_olympic, Number(row.total)]));
+};
+
+const getOlympicsInfo = async () => {
+    const [olympics, levels, phases, years, questions, validated, reviewers] = await Promise.all([
+        Olympic.findAll({
+            attributes: ["id", "name", "language", "active"],
+            order: [["name", "ASC"]],
+            raw: true,
+        }),
+        countByOlympic(OlympicLevel),
+        countByOlympic(OlympicPhase),
+        countByOlympic(OlympicYear),
+        countByOlympic(OlympicQuestion),
+        countByOlympic(OlympicQuestion, { validate: 1 }),
+        countByOlympic(RevisorOlympics, {}, "userFinalId"),
+    ]);
+
+    return olympics.map((olympic) => ({
+        id: olympic.id,
+        name: olympic.name,
+        language: olympic.language,
+        active: olympic.active,
+        countLevels: levels.get(olympic.id) || 0,
+        countPhases: phases.get(olympic.id) || 0,
+        countYears: years.get(olympic.id) || 0,
+        countQuestions: questions.get(olympic.id) || 0,
+        countValidated: validated.get(olympic.id) || 0,
+        countReviewers: reviewers.get(olympic.id) || 0,
+    }));
+};
 
 const getImagePath = (id, fileExt) => {
     if (!/^olympic\d+$/.test(String(id)) || !/^[A-Za-z0-9]{1,10}$/.test(String(fileExt))) return null;
@@ -308,5 +389,7 @@ module.exports = {
     getOlympicPhase,
     getAllOlympicPhases,
     updateOlympicPhase,
-    deleteOlympicPhase
+    deleteOlympicPhase,
+
+    getOlympicsInfo
 }

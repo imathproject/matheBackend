@@ -1,6 +1,7 @@
 const OlympicQuestionService = require("../services/OlympicQuestionService");
 const OlympicService = require("../services/OlympicService");
 const revisorOlympicsService = require("../services/revisorOlympicsService");
+const olympicKeywordService = require("../services/olympicKeywordService");
 const { tryCatch } = require("../utils/tryCatch");
 const fs = require("fs");
 
@@ -22,6 +23,23 @@ const buildFilters = (req) => {
         validate: validate !== undefined && validate !== null && validate !== "null" ? Number(validate) : null,
         active: active !== undefined && active !== null && active !== "null" ? Number(active) : null
     };
+};
+
+const MIN_DIFFICULTY = 1;
+const MAX_DIFFICULTY = 5;
+const INVALID_DIFFICULTY = "difficulty must be an integer between 1 and 5, or null.";
+
+// undefined: field not sent. null: clear it. Otherwise an integer in range,
+// or NaN when the value is not acceptable.
+const parseDifficulty = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || value === "") return null;
+    if (typeof value !== "number" && typeof value !== "string") return NaN;
+
+    const difficulty = Number(value);
+    return Number.isInteger(difficulty) && difficulty >= MIN_DIFFICULTY && difficulty <= MAX_DIFFICULTY
+        ? difficulty
+        : NaN;
 };
 
 const resolveManageableQuestion = async (req, res, id) => {
@@ -72,8 +90,15 @@ const addOlympicQuestion = tryCatch(async (req, res) => {
             return res.status(400).json({ message: `${field} is required.` });
         }
     }
+
+    const difficulty = parseDifficulty(req.body.difficulty);
+    if (Number.isNaN(difficulty)) {
+        return res.status(400).json({ message: INVALID_DIFFICULTY });
+    }
+
     const questionData = {
         ...req.body,
+        difficulty,
         id_lect: req.user
     };
 
@@ -140,7 +165,13 @@ const updateOlympicQuestion = tryCatch(async (req, res) => {
         return res.status(403).json({ message: denial });
     }
 
-    const result = await OlympicQuestionService.updateOlympicQuestion(req.body, id, req.user, question.validate);
+    const difficulty = parseDifficulty(req.body.difficulty);
+    if (Number.isNaN(difficulty)) {
+        return res.status(400).json({ message: INVALID_DIFFICULTY });
+    }
+
+    const data = { ...req.body, difficulty };
+    const result = await OlympicQuestionService.updateOlympicQuestion(data, id, req.user, question.validate);
     return res.status(200).json(result);
 });
 
@@ -153,7 +184,12 @@ const validateOlympicQuestion = tryCatch(async (req, res) => {
         return res.status(400).json({ message: "validate is required." });
     }
 
-    const data = { ...req.body, validate: Number(validate) };
+    const difficulty = parseDifficulty(req.body.difficulty);
+    if (Number.isNaN(difficulty)) {
+        return res.status(400).json({ message: INVALID_DIFFICULTY });
+    }
+
+    const data = { ...req.body, validate: Number(validate), difficulty };
     const result = await OlympicQuestionService.validateOlympicQuestion(data, id, userId);
     return res.status(200).json(result);
 });
@@ -168,8 +204,8 @@ const getEnrichedOlympicQuestions = tryCatch(async (req, res) => {
     return res.status(200).json({ elements: questions });
 });
 
-const getOwnOlympicQuestions = tryCatch(async (req, res) => {
-    const questions = await OlympicQuestionService.getOwnOlympicQuestions(buildFilters(req), req.user);
+const getUserOlympicQuestions = tryCatch(async (req, res) => {
+    const questions = await OlympicQuestionService.getUserOlympicQuestions(buildFilters(req), req.user);
 
     return res.status(200).json({ elements: questions });
 });
@@ -252,12 +288,12 @@ const updateReviewerOlympics = tryCatch(async (req, res) => {
     return res.status(200).json({ elements: revisorOlympics });
 });
 
-const getMyReviewerOlympics = tryCatch(async (req, res) => {
+const getUserReviewerOlympics = tryCatch(async (req, res) => {
     const reviewerOlympics = await revisorOlympicsService.findByUserId(req.user);
     return res.status(200).json({ elements: reviewerOlympics });
 });
 
-const updateMyReviewerOlympics = tryCatch(async (req, res) => {
+const updateUserReviewerOlympics = tryCatch(async (req, res) => {
     const { olympics } = req.body;
     if (!Array.isArray(olympics) || olympics.length === 0) {
         return res.status(400).json({ message: "Select at least one olympiad." });
@@ -270,11 +306,56 @@ const updateMyReviewerOlympics = tryCatch(async (req, res) => {
 
     return res.status(200).json({ elements: revisorOlympics });
 });
+
+const getOlympicKeywords = tryCatch(async (req, res) => {
+    const elements = await olympicKeywordService.getOptions(req.query.lang);
+    return res.status(200).json({ elements });
+});
+
+// Project Information filters: positive integers only, anything else is ignored.
+const toId = (value) => {
+    if (typeof value !== "number" && typeof value !== "string") return null;
+    if (typeof value === "string" && value.trim() === "") return null;
+
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+const buildInformationFilters = (req) => {
+    const { olympic, level, phase, year } = req.body || {};
+
+    return {
+        olympic: toId(olympic),
+        level: toId(level),
+        phase: toId(phase),
+        year: toId(year)
+    };
+};
+
+const getOlympicKeywordsInfo = tryCatch(async (req, res) => {
+    const keywords = await olympicKeywordService.getKeywordsInfo(buildInformationFilters(req));
+    return res.status(200).json({ elements: keywords });
+});
+
+const getAllOlympicQuestionsInfo = tryCatch(async (req, res) => {
+    const questions = await OlympicQuestionService.getAllOlympicQuestionsInfo(buildInformationFilters(req));
+    return res.status(200).json({ elements: questions });
+});
+
+const getOlympicValidationInfo = tryCatch(async (req, res) => {
+    const questions = await OlympicQuestionService.getOlympicValidationInfo(buildInformationFilters(req));
+    return res.status(200).json({ elements: questions });
+});
+
 module.exports = {
+    getOlympicKeywordsInfo,
+    getAllOlympicQuestionsInfo,
+    getOlympicValidationInfo,
+    getOlympicKeywords,
     addOlympicQuestion,
     getAllOlympicQuestions,
     getEnrichedOlympicQuestions,
-    getOwnOlympicQuestions,
+    getUserOlympicQuestions,
     getOlympicQuestionsForValidation,
     getReviewScope,
     deleteOlympicQuestion,
@@ -286,6 +367,6 @@ module.exports = {
     downloadOlympicQuestionImage,
     getReviewerOlympics,
     updateReviewerOlympics,
-    getMyReviewerOlympics,
-    updateMyReviewerOlympics,
+    getUserReviewerOlympics,
+    updateUserReviewerOlympics,
 }

@@ -9,7 +9,7 @@ const OlympicYear = require("../models/olympicYearModel");
 const OlympicPhase = require("../models/olympicPhaseModel");
 const User = require("../models/userModel");
 const University = require("../models/universityModel");
-const { Op } = require("sequelize");
+const { Op, fn, col } = require("sequelize");
 const { calculateChallengeScore, COMPETITION_PENALTY_FACTOR } = require("../utils/challengeScore");
 
 const getAllOlympiadsChallenges = async () => {
@@ -567,6 +567,74 @@ const getOlympiadsChallengeLeaderboard = async (challengeId) => {
     return leaderboard;
 };
 
+/**
+ * Project Information report: one flat row per challenge.
+ * The challenge stores id_olympic / id_olympic_level / id_olympic_phase / id_olympic_year itself
+ * (level, phase and year are optional), so the filters apply to those columns.
+ */
+const getOlympiadsChallengesInfo = async ({ olympic, level, phase, year } = {}) => {
+    const where = {};
+    if (olympic) where.id_olympic = olympic;
+    if (level) where.id_olympic_level = level;
+    if (phase) where.id_olympic_phase = phase;
+    if (year) where.id_olympic_year = year;
+
+    const challenges = await OlympiadsChallenge.findAll({
+        where,
+        order: [["id", "DESC"]],
+        include: [
+            { model: User, attributes: ["name", "surname"] },
+            { model: Olympic, attributes: ["name"] },
+            { model: OlympicLevel, attributes: ["level"] },
+            { model: OlympicYear, attributes: ["year"] },
+            { model: OlympicPhase, attributes: ["phase"] },
+        ],
+    });
+    if (challenges.length === 0) return [];
+
+    // Grouped counts in separate queries, so the answers don't multiply the challenge rows
+    const answerWhere = { olympiads_challenge_id: { [Op.in]: challenges.map((c) => c.id) } };
+    const [participants, answers] = await Promise.all([
+        OlympiadsChallengeQuestion.findAll({
+            attributes: ["olympiads_challenge_id", [fn("COUNT", fn("DISTINCT", col("user_id"))), "total"]],
+            where: answerWhere,
+            group: ["olympiads_challenge_id"],
+            raw: true,
+        }),
+        // option_selected = -1 is the placeholder created when the student starts the challenge
+        OlympiadsChallengeQuestion.findAll({
+            attributes: ["olympiads_challenge_id", [fn("COUNT", col("id")), "total"]],
+            where: { ...answerWhere, option_selected: { [Op.ne]: -1 } },
+            group: ["olympiads_challenge_id"],
+            raw: true,
+        }),
+    ]);
+    const participantsMap = new Map(participants.map((r) => [r.olympiads_challenge_id, Number(r.total)]));
+    const answersMap = new Map(answers.map((r) => [r.olympiads_challenge_id, Number(r.total)]));
+
+    return challenges.map((challenge) => {
+        const data = challenge.get({ plain: true });
+        const creator = data.user_final;
+        return {
+            id: data.id,
+            code: data.code,
+            title: data.title,
+            localization: data.localization,
+            Creator: creator ? [creator.name, creator.surname].filter(Boolean).join(" ") : null,
+            Olympiad: data.olympic ? data.olympic.name : null,
+            Level: data.olympic_level ? data.olympic_level.level : null,
+            Phase: data.olympic_phase ? data.olympic_phase.phase : null,
+            Year: data.olympic_year ? data.olympic_year.year : null,
+            numberOfQuestions: data.numberOfQuestions,
+            maxDuration: data.maxDuration,
+            status: data.status,
+            date: data.date,
+            countParticipants: participantsMap.get(data.id) || 0,
+            countAnswers: answersMap.get(data.id) || 0,
+        };
+    });
+};
+
 module.exports = {
     getAllOlympiadsChallenges,
     getOlympiadsChallenge,
@@ -579,4 +647,5 @@ module.exports = {
     getNextOlympiadsChallengeQuestion,
     submitStudentAnswer,
     getOlympiadsChallengeLeaderboard,
+    getOlympiadsChallengesInfo,
 };

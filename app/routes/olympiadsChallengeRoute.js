@@ -9,6 +9,9 @@ router.post("/create", verifyRoles(ADMIN), olympiadsChallenge.createOlympiadsCha
 router.put("/update", verifyRoles(ADMIN), olympiadsChallenge.updateOlympiadsChallenge);
 router.delete("/delete/:id", verifyRoles(ADMIN), olympiadsChallenge.deleteOlympiadsChallenge);
 
+// Project Information report (admin only)
+router.post("/challengesInformation", verifyRoles(ADMIN), olympiadsChallenge.getAllOlympiadsChallengesInfo);
+
 // Status management (admin only for updating, any user for reading)
 router.put("/updateStatus", verifyRoles(ADMIN), olympiadsChallenge.updateStatus);
 router.get("/:id/status", olympiadsChallenge.getStatus);

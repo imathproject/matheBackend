@@ -1,8 +1,16 @@
 const OlympicQuestion = require("../models/olympicQuestionsModel");
 const OlympicQuestionAssessment = require("../models/olympicQuestionAssessmentModel");
 const OlympicAlternatives = require("../models/olympicAlternatives");
+const Olympic = require("../models/olympicModel");
+const OlympicLevel = require("../models/olympicLevelModel");
+const OlympicPhase = require("../models/olympicPhaseModel");
+const OlympicYear = require("../models/olympicYearModel");
+const OlympiadsChallenge = require("../models/olympiadsChallengeModel");
+const OlympiadsChallengeQuestion = require("../models/olympiadsChallengeQuestionModel");
+const User = require("../models/userModel");
+const Role = require("../models/roleModel");
 const getDate = require("../utils/date");
-const { QueryTypes } = require("sequelize");
+const { QueryTypes, Op } = require("sequelize");
 const db = require("../utils/db");
 
 const answerQuestion = async (username, data) => {
@@ -167,9 +175,110 @@ const fillMissingMonths = (rows) => {
   return filled;
 };
 
+const ASSESSMENT_INFO_SOURCES = ["assessment", "challenge", "both"];
+
+const buildAssessmentInfoIncludes = ({ olympic, level, phase, year, role }, questionAs) => {
+  const questionWhere = {};
+  if (olympic) questionWhere.id_olympic = olympic;
+  if (level) questionWhere.id_olympic_level = level;
+  if (phase) questionWhere.id_olympic_phase = phase;
+  if (year) questionWhere.id_olympic_year = year;
+
+  const questionInclude = {
+    model: OlympicQuestion,
+    attributes: ["id"],
+    include: [
+      { model: Olympic, attributes: ["name"] },
+      { model: OlympicLevel, attributes: ["level"] },
+      { model: OlympicPhase, attributes: ["phase"] },
+      { model: OlympicYear, attributes: ["year"] },
+    ],
+  };
+  if (questionAs) questionInclude.as = questionAs;
+  if (Object.keys(questionWhere).length > 0) questionInclude.where = questionWhere;
+
+  const userInclude = {
+    model: User,
+    attributes: ["id", "typology"],
+    include: [{ model: Role, attributes: ["id", "description"] }],
+  };
+  if (Array.isArray(role)) {
+    const valueMap = {
+      1: process.env.Student,
+      2: process.env.Lecture,
+      3: process.env.Lecture_Reviewer,
+      4: process.env.Admin,
+    };
+    userInclude.where = { typology: role.map((num) => valueMap[num]) };
+  }
+
+  return [questionInclude, userInclude];
+};
+
+// Same flat keys for both sources, so the frontend can export the raw JSON.
+const toAssessmentInfoRow = (source, item, question, studentId, challenge) => ({
+  Source: source,
+  Challenge: challenge ? challenge.code : null,
+  student_id: studentId,
+  Typology: item.user_final?.role?.description ?? null,
+  question_id: item.id_olympic_question,
+  Olympiad: question?.olympic?.name ?? null,
+  Level: question?.olympic_level?.level ?? null,
+  Phase: question?.olympic_phase?.phase ?? null,
+  Year: question?.olympic_year?.year ?? null,
+  option_selected: item.option_selected,
+  answer: item.answer,
+  date: item.date,
+  duration: item.duration,
+});
+
+const getAllOlympicAssessmentsInfo = async (data) => {
+  const { date } = data;
+  const source = data.source || "both";
+  const conditions = {};
+  if (date) conditions.date = { [Op.substring]: date };
+
+  let assessments = [];
+  let challenges = [];
+
+  if (source !== "challenge") {
+    const rows = await OlympicQuestionAssessment.findAll({
+      where: conditions,
+      attributes: ["student_id", "id_olympic_question", "answer", "date", "duration", "option_selected"],
+      include: buildAssessmentInfoIncludes(data, "question_details"),
+      order: [["date", "ASC"]],
+    });
+    assessments = rows.map((item) =>
+      toAssessmentInfoRow("Assessment", item, item.question_details, item.student_id, null)
+    );
+  }
+
+  if (source !== "assessment") {
+    const rows = await OlympiadsChallengeQuestion.findAll({
+      // option_selected = -1 is the placeholder created when the student starts the challenge
+      where: { ...conditions, option_selected: { [Op.ne]: -1 } },
+      attributes: ["user_id", "id_olympic_question", "answer", "date", "duration", "option_selected"],
+      include: [
+        ...buildAssessmentInfoIncludes(data),
+        { model: OlympiadsChallenge, attributes: ["code", "title"] },
+      ],
+      order: [["date", "ASC"]],
+    });
+    challenges = rows.map((item) =>
+      toAssessmentInfoRow("Challenge", item, item.olympic_question, item.user_id, item.olympiads_challenge)
+    );
+  }
+
+  if (source !== "both") return source === "assessment" ? assessments : challenges;
+
+  return [...assessments, ...challenges].sort((a, b) => new Date(a.date) - new Date(b.date));
+};
+
 
 module.exports = {
   answerQuestion,
   getAllOlympicPerformance,
-  getOlympicPerformance
+  getOlympicPerformance,
+  getAllOlympicAssessmentsInfo,
+  ASSESSMENT_INFO_SOURCES
 }

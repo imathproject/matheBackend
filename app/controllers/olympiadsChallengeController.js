@@ -72,6 +72,24 @@ const getNextQuestion = tryCatch(async (req, res) => {
     return res.status(200).json({ element: result });
 });
 
+// Positive integer or undefined (empty/invalid filters are ignored)
+const toFilterId = (value) => {
+    if (value === null || value === undefined || value === "") return undefined;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const getAllOlympiadsChallengesInfo = tryCatch(async (req, res) => {
+    const filters = {
+        olympic: toFilterId(req.body.olympic),
+        level: toFilterId(req.body.level),
+        phase: toFilterId(req.body.phase),
+        year: toFilterId(req.body.year),
+    };
+    const challenges = await OlympiadsChallengeService.getOlympiadsChallengesInfo(filters);
+    return res.status(200).json({ elements: challenges });
+});
+
 module.exports = {
     getAllOlympiadsChallenges,
     getOlympiadsChallenge,
@@ -84,4 +102,5 @@ module.exports = {
     submitAnswer,
     getLeaderboard,
     getNextQuestion,
+    getAllOlympiadsChallengesInfo,
 };

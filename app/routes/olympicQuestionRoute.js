@@ -4,14 +4,18 @@ const verifyRoles = require("../../middleware/verifyRoles");
 const { ADMIN, CONTENT_MANAGER, REVIEWER_OR_ADMIN } = require("../../middleware/roleGroups");
 
 router.post("/add", verifyRoles(CONTENT_MANAGER), olympicQuestionController.addOlympicQuestion);//Admin, Lecturer, Reviewer
+router.get("/keywords", verifyRoles(CONTENT_MANAGER), olympicQuestionController.getOlympicKeywords);//Admin, Lecturer, Reviewer: keyword options for the question form (?lang=pt|en)
 router.get("/getAll/:id_olympic", verifyRoles(ADMIN), olympicQuestionController.getAllOlympicQuestions);
-router.get("/getMine", verifyRoles(CONTENT_MANAGER), olympicQuestionController.getOwnOlympicQuestions);//Only the caller's own questions
-router.get("/getMine/:id_olympic", verifyRoles(CONTENT_MANAGER), olympicQuestionController.getOwnOlympicQuestions);
+router.get("/getUserQuestions", verifyRoles(CONTENT_MANAGER), olympicQuestionController.getUserOlympicQuestions);//Only the caller's own questions
+router.get("/getUserQuestions/:id_olympic", verifyRoles(CONTENT_MANAGER), olympicQuestionController.getUserOlympicQuestions);
 router.get("/getForValidation", verifyRoles(REVIEWER_OR_ADMIN), olympicQuestionController.getOlympicQuestionsForValidation);//Admin: all; Reviewer: own olympiads
 router.get("/getForValidation/:id_olympic", verifyRoles(REVIEWER_OR_ADMIN), olympicQuestionController.getOlympicQuestionsForValidation);
 router.get("/reviewScope", verifyRoles(REVIEWER_OR_ADMIN), olympicQuestionController.getReviewScope);//Admin: every olympiad; Reviewer: own olympiads
 router.get("/getEnriched", verifyRoles(ADMIN), olympicQuestionController.getEnrichedOlympicQuestions);//Admin only (All Olympic Questions): validated questions only
 router.get("/getEnriched/:id_olympic", verifyRoles(ADMIN), olympicQuestionController.getEnrichedOlympicQuestions);
+router.post("/keywordsInformation", verifyRoles(ADMIN), olympicQuestionController.getOlympicKeywordsInfo);//Admin only (Olympic Project Information)
+router.post("/questionsInformation", verifyRoles(ADMIN), olympicQuestionController.getAllOlympicQuestionsInfo);
+router.post("/validationInformation", verifyRoles(ADMIN), olympicQuestionController.getOlympicValidationInfo);
 //router.get("/getAllValidated", olympicQuestionController.getAllValidatedOlympicQuestions); //
 router.get("/getTest", olympicQuestionController.getOlympicTest);
 router.get("/getTestOptions", olympicQuestionController.getOlympicTestOptions);
@@ -34,14 +38,14 @@ router.post(
     olympicQuestionController.updateReviewerOlympics
 );
 router.get(
-    "/getMyReviewerOlympics",
+    "/getUserReviewerOlympics",
     verifyRoles(process.env.Lecture_Reviewer),
-    olympicQuestionController.getMyReviewerOlympics
+    olympicQuestionController.getUserReviewerOlympics
 );
 router.post(
-    "/updateMyReviewerOlympics",
+    "/updateUserReviewerOlympics",
     verifyRoles(process.env.Lecture_Reviewer),
-    olympicQuestionController.updateMyReviewerOlympics
+    olympicQuestionController.updateUserReviewerOlympics
 );
 
 module.exports = router;

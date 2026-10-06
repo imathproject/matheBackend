@@ -98,8 +98,43 @@ const getOlympicPerformance = withOlympicErrorHandling(
   "Error fetching Olympic performance data"
 );
 
+const toFilterId = (value) => {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+const getAllOlympicAssessmentsInfo = withOlympicErrorHandling(
+  async (req, res) => {
+    const { olympic, level, phase, year, role, date, source } = req.body;
+
+    const finalSource = source === undefined || source === null || source === "" ? "both" : source;
+    if (!OlympicAssessmentService.ASSESSMENT_INFO_SOURCES.includes(finalSource)) {
+      return res.status(400).json({ message: "Invalid source" });
+    }
+
+    const filters = {
+      olympic: toFilterId(olympic),
+      level: toFilterId(level),
+      phase: toFilterId(phase),
+      year: toFilterId(year),
+      // 1..4 = Student / Lecturer / Reviewer / Admin; not sent = every role
+      role: Array.isArray(role)
+        ? role.map(Number).filter((num) => [1, 2, 3, 4].includes(num))
+        : null,
+      date: /^\d{4}$/.test(String(date ?? "")) ? String(date) : null,
+      source: finalSource,
+    };
+
+    const assessments = await OlympicAssessmentService.getAllOlympicAssessmentsInfo(filters);
+    return res.status(200).json({ elements: assessments });
+  },
+  "Error getting Olympic assessments information:",
+  "Error fetching Olympic assessments information"
+);
+
 module.exports = {
   answerQuestion,
   getAllOlympicPerformance,
   getOlympicPerformance,
+  getAllOlympicAssessmentsInfo,
 };

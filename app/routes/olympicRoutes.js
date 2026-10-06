@@ -11,6 +11,10 @@ router.put("/update", verifyRoles(ADMIN), olympic.updateOlympic); //Admin
 router.delete("/delete/:id", verifyRoles(ADMIN), olympic.deleteOlympic);//Admin
 router.post("/uploadImage", verifyRoles(ADMIN), olympic.uploadOlympicImage); //Admin
 
+//Project Information reports
+router.post("/olympicsInformation", verifyRoles(ADMIN), olympic.getAllOlympicsInfo); //Admin
+router.post("/usersInformation", verifyRoles(ADMIN), olympic.getAllOlympicUsersInfo); //Admin
+
 //Olympic Level routes
 router.post("/level/add", verifyRoles(ADMIN), olympic.addNewOlympicLevel);
 router.get("/level/getById/:id", olympic.getOlympicLevel);
